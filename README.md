@@ -33,8 +33,13 @@ Originally based off of [deep-clone-derive](https://github.com/asajeffrey/deep-c
  * normal [structs](./tests/struct.rs)
  * enums with tuple variants [tuple enums](./tests/simple_enum.rs)
  * `IntoOwned` alike fields (actually assumes all fields with types with lifetimes are `IntoOwned` alike)
- * [options of Cow or Cow-like types](./tests/opt_field.rs) `Option<Cow<'a, str>>` and `Option<Foo<'a>>`
- * [vectors of Cow or Cow-like types](./tests/vec.rs)
+ * `Cow<'a, B>`
+ * [`Option<T>`](./tests/opt_field.rs)
+ * [`Vec<T>`](./tests/vec.rs)
+ * `Box<T>`
+ * [arrays](./tests/array.rs)
+ * [tuples](./tests/tuple.rs)
+ * arbitrarily nested types built from the above ([Example 1](./tests/nested_types.rs), [Example 2](./tests/triple_cow.rs))
 
 But wait there is even more! `[derive(Borrowed)]` generates a currently perhaps a bit limited version of a method like:
 
@@ -59,9 +64,7 @@ Note, there's no trait implementation expected because I didn't find one at the 
 Currently deriving will fail miserably for at least but not limited to:
 
  * `IntoOwned`: borrowed fields like `&'a str`
- * `Borrowed`: struct/enum has more than one lifetime
- * both: arrays not supported
- * both: into_owned/borrowed types inside tuples inside vectors
+ * `Borrowed`: struct/enum has multiple lifetimes that depend on each other (explicitly or implicitly)
 
 Using with incompatible types results in not so understandable error messages. For example, given a struct:
 
