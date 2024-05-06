@@ -5,13 +5,14 @@ use std::borrow::Cow;
 
 #[derive(IntoOwned, Borrowed)]
 struct NestedTypes<'a> {
-    a: Vec<Option<Cow<'a, Option<Cow<'a, str>>>>>,
+    #[allow(clippy::type_complexity)]
+    a: Vec<Option<Cow<'a, Option<Box<Cow<'a, str>>>>>>,
 }
 
 #[test]
 fn triple_cow() {
     let val = NestedTypes {
-        a: vec![Some(Cow::Owned(Some(Cow::Borrowed("str"))))],
+        a: vec![Some(Cow::Owned(Some(Box::new(Cow::Borrowed("str")))))],
     };
     let owned = val.into_owned();
 

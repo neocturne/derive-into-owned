@@ -8,6 +8,7 @@ pub enum FieldKind {
     AssumedCow,
     OptField(Box<FieldKind>),
     IterableField(Box<FieldKind>),
+    Box(Box<FieldKind>),
     Array(Box<FieldKind>),
     Tuple(Vec<FieldKind>),
     JustMoved,
@@ -26,6 +27,8 @@ impl FieldKind {
                     FieldKind::OptField(Box::new(kind))
                 } else if let Some(kind) = generic_field(&segments, "std::vec::Vec") {
                     FieldKind::IterableField(Box::new(kind))
+                } else if let Some(kind) = generic_field(&segments, "std::boxed::Box") {
+                    FieldKind::Box(Box::new(kind))
                 } else {
                     FieldKind::JustMoved
                 }
@@ -73,6 +76,11 @@ impl FieldKind {
 
                 quote! { #var.into_iter().map(|#next| #tokens).collect() }
             }
+            Box(inner) => {
+                let tokens = inner.move_or_clone_field(&quote! { (*#var) });
+
+                quote! { ::std::boxed::Box::new(#tokens) }
+            }
             Array(inner) => {
                 let next = format_ident!("x");
                 let tokens = inner.move_or_clone_field(&quote! { #next });
@@ -113,6 +121,11 @@ impl FieldKind {
                 let tokens = inner.borrow_or_clone(&quote! { #next });
 
                 quote! { #var.iter().map(|#next| #tokens).collect() }
+            }
+            Box(inner) => {
+                let tokens = inner.borrow_or_clone(&quote! { #var.as_ref() });
+
+                quote! { ::std::boxed::Box::new(#tokens) }
             }
             Array(inner) => {
                 let next = format_ident!("x");
