@@ -8,26 +8,31 @@ pub enum FieldKind {
     AssumedCow,
     OptField(Box<FieldKind>),
     IterableField(Box<FieldKind>),
+    Array(Box<FieldKind>),
     JustMoved,
 }
 impl FieldKind {
     pub fn resolve(ty: &syn::Type) -> Self {
-        if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
-            let segments = collect_segments(path);
+        match ty {
+            syn::Type::Path(syn::TypePath { path, .. }) => {
+                let segments = collect_segments(path);
 
-            if let Some(kind) = cow_field(&segments) {
-                FieldKind::PlainCow(Box::new(kind))
-            } else if is_cow_alike(&segments) {
-                FieldKind::AssumedCow
-            } else if let Some(kind) = generic_field(&segments, "std::option::Option") {
-                FieldKind::OptField(Box::new(kind))
-            } else if let Some(kind) = generic_field(&segments, "std::vec::Vec") {
-                FieldKind::IterableField(Box::new(kind))
-            } else {
-                FieldKind::JustMoved
+                if let Some(kind) = cow_field(&segments) {
+                    FieldKind::PlainCow(Box::new(kind))
+                } else if is_cow_alike(&segments) {
+                    FieldKind::AssumedCow
+                } else if let Some(kind) = generic_field(&segments, "std::option::Option") {
+                    FieldKind::OptField(Box::new(kind))
+                } else if let Some(kind) = generic_field(&segments, "std::vec::Vec") {
+                    FieldKind::IterableField(Box::new(kind))
+                } else {
+                    FieldKind::JustMoved
+                }
             }
-        } else {
-            FieldKind::JustMoved
+            syn::Type::Array(syn::TypeArray { elem, .. }) => {
+                FieldKind::Array(Box::new(FieldKind::resolve(elem)))
+            }
+            _ => FieldKind::JustMoved,
         }
     }
 
@@ -59,6 +64,12 @@ impl FieldKind {
 
                 quote! { #var.into_iter().map(|#next| #tokens).collect() }
             }
+            Array(inner) => {
+                let next = format_ident!("x");
+                let tokens = inner.move_or_clone_field(&quote! { #next });
+
+                quote! { #var.map(|#next| #tokens) }
+            }
             JustMoved => quote! { #var },
         }
     }
@@ -80,6 +91,12 @@ impl FieldKind {
                 let tokens = inner.borrow_or_clone(&quote! { #next });
 
                 quote! { #var.iter().map(|#next| #tokens).collect() }
+            }
+            Array(inner) => {
+                let next = format_ident!("x");
+                let tokens = inner.borrow_or_clone(&quote! { #next });
+
+                quote! { #var.each_ref().map(|#next| #tokens) }
             }
             JustMoved => quote! { #var.clone() },
         }
