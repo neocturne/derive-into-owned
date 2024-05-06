@@ -292,13 +292,44 @@ impl BodyGenerator for BorrowedGen {
     }
 
     fn visit_struct(&self, data: &syn::DataStruct) -> proc_macro2::TokenStream {
-        let fields = data.fields.iter().map(|field| {
-            let ident = field.ident.as_ref().expect("this fields has no ident (4)");
-            let field_ref = quote! { self.#ident };
-            let code = FieldKind::resolve(&field.ty).borrow_or_clone(&field_ref);
-            quote! { #ident: #code }
-        });
-        quote! { { #(#fields),* } }
+        // Helper ternary to avoid Option<bool>
+        enum Fields {
+            Named,
+            Tuple,
+            Unit,
+        }
+
+        use Fields::*;
+
+        let fields_kind = data
+            .fields
+            .iter()
+            .next()
+            .map(|field| if field.ident.is_some() { Named } else { Tuple })
+            .unwrap_or(Unit);
+
+        match fields_kind {
+            Named => {
+                let fields = data.fields.iter().map(|field| {
+                    let ident = field.ident.as_ref().expect("unexpected unnamed field");
+                    let field_ref = quote! { (&self.#ident) };
+                    let code = FieldKind::resolve(&field.ty).borrow_or_clone(&field_ref);
+                    quote! { #ident: #code }
+                });
+                quote! { { #(#fields),* } }
+            }
+            Tuple => {
+                let fields = data.fields.iter().enumerate().map(|(index, field)| {
+                    let index = syn::Index::from(index);
+                    let index = quote! { (&self.#index) };
+                    FieldKind::resolve(&field.ty).borrow_or_clone(&index)
+                });
+                quote! { ( #(#fields),* ) }
+            }
+            Unit => {
+                quote! {}
+            }
+        }
     }
 
     fn visit_enum_data(
