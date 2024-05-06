@@ -9,6 +9,7 @@ pub enum FieldKind {
     OptField(Box<FieldKind>),
     IterableField(Box<FieldKind>),
     Array(Box<FieldKind>),
+    Tuple(Vec<FieldKind>),
     JustMoved,
 }
 impl FieldKind {
@@ -31,6 +32,14 @@ impl FieldKind {
             }
             syn::Type::Array(syn::TypeArray { elem, .. }) => {
                 FieldKind::Array(Box::new(FieldKind::resolve(elem)))
+            }
+            syn::Type::Tuple(syn::TypeTuple { elems, .. }) => {
+                if elems.is_empty() {
+                    // Unit
+                    FieldKind::JustMoved
+                } else {
+                    FieldKind::Tuple(elems.iter().map(FieldKind::resolve).collect())
+                }
             }
             _ => FieldKind::JustMoved,
         }
@@ -70,6 +79,19 @@ impl FieldKind {
 
                 quote! { #var.map(|#next| #tokens) }
             }
+            Tuple(fields) => {
+                let next = format_ident!("val");
+                let fields = fields.iter().enumerate().map(|(index, field)| {
+                    let index = syn::Index::from(index);
+                    field.move_or_clone_field(&quote! { #next.#index })
+                });
+                quote! {
+                    {
+                        let #next = #var;
+                        ( #(#fields),* , )
+                    }
+                }
+            }
             JustMoved => quote! { #var },
         }
     }
@@ -97,6 +119,19 @@ impl FieldKind {
                 let tokens = inner.borrow_or_clone(&quote! { #next });
 
                 quote! { #var.each_ref().map(|#next| #tokens) }
+            }
+            Tuple(fields) => {
+                let next = format_ident!("val");
+                let fields = fields.iter().enumerate().map(|(index, field)| {
+                    let index = syn::Index::from(index);
+                    field.borrow_or_clone(&quote! { (&#next.#index) })
+                });
+                quote! {
+                    {
+                        let #next = #var;
+                        ( #(#fields),* , )
+                    }
+                }
             }
             JustMoved => quote! { #var.clone() },
         }
