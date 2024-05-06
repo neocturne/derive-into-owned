@@ -1,27 +1,28 @@
 use quote::{format_ident, quote};
 
-use crate::helpers::{collect_segments, is_cow, is_cow_alike, is_iter_field, is_opt_cow};
+use crate::helpers::{collect_segments, cow_field, generic_field, is_cow_alike};
 
 #[derive(Debug)]
 pub enum FieldKind {
-    PlainCow,
+    PlainCow(Box<FieldKind>),
     AssumedCow,
-    /// Option fields with either PlainCow or AssumedCow
-    OptField(usize, Box<FieldKind>),
+    OptField(Box<FieldKind>),
     IterableField(Box<FieldKind>),
     JustMoved,
 }
 impl FieldKind {
     pub fn resolve(ty: &syn::Type) -> Self {
         if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
-            if is_cow(&collect_segments(path)) {
-                FieldKind::PlainCow
-            } else if is_cow_alike(&collect_segments(path)) {
+            let segments = collect_segments(path);
+
+            if let Some(kind) = cow_field(&segments) {
+                FieldKind::PlainCow(Box::new(kind))
+            } else if is_cow_alike(&segments) {
                 FieldKind::AssumedCow
-            } else if let Some(kind) = is_opt_cow(collect_segments(path)) {
-                kind
-            } else if let Some(kind) = is_iter_field(collect_segments(path)) {
-                kind
+            } else if let Some(kind) = generic_field(&segments, "std::option::Option") {
+                FieldKind::OptField(Box::new(kind))
+            } else if let Some(kind) = generic_field(&segments, "std::vec::Vec") {
+                FieldKind::IterableField(Box::new(kind))
             } else {
                 FieldKind::JustMoved
             }
@@ -33,28 +34,30 @@ impl FieldKind {
     pub fn move_or_clone_field(&self, var: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         use self::FieldKind::*;
 
-        match *self {
-            PlainCow => quote! { ::std::borrow::Cow::Owned(#var.into_owned()) },
-            AssumedCow => quote! { #var.into_owned() },
-            OptField(levels, ref inner) => {
+        match self {
+            PlainCow(inner) => {
                 let next = format_ident!("val");
-                let next = quote! { #next };
+                let tokens = inner.move_or_clone_field(&quote! { #next });
 
-                let mut tokens = inner.move_or_clone_field(&next);
-
-                for _ in 0..(levels - 1) {
-                    tokens = quote! { #next.map(|#next| #tokens) };
+                quote! {
+                    {
+                        let #next = ::std::borrow::Cow::into_owned(#var);
+                        ::std::borrow::Cow::Owned(#tokens)
+                    }
                 }
+            }
+            AssumedCow => quote! { #var.into_owned() },
+            OptField(inner) => {
+                let next = format_ident!("val");
+                let tokens = inner.move_or_clone_field(&quote! { #next });
 
                 quote! { #var.map(|#next| #tokens) }
             }
-            IterableField(ref inner) => {
+            IterableField(inner) => {
                 let next = format_ident!("x");
-                let next = quote! { #next };
+                let tokens = inner.move_or_clone_field(&quote! { #next });
 
-                let tokens = inner.move_or_clone_field(&next);
-
-                quote! { #var.into_iter().map(|x| #tokens).collect() }
+                quote! { #var.into_iter().map(|#next| #tokens).collect() }
             }
             JustMoved => quote! { #var },
         }
@@ -63,28 +66,20 @@ impl FieldKind {
     pub fn borrow_or_clone(&self, var: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         use self::FieldKind::*;
 
-        match *self {
-            PlainCow => quote! { ::std::borrow::Cow::Borrowed(#var.as_ref()) },
+        match self {
+            PlainCow(_) => quote! { ::std::borrow::Cow::Borrowed(#var.as_ref()) },
             AssumedCow => quote! { #var.borrowed() },
-            OptField(levels, ref inner) => {
+            OptField(inner) => {
                 let next = format_ident!("val");
-                let next = quote! { #next };
-
-                let mut tokens = inner.borrow_or_clone(&next);
-
-                for _ in 0..(levels - 1) {
-                    tokens = quote! { #next.as_ref().map(|#next| #tokens) };
-                }
+                let tokens = inner.borrow_or_clone(&quote! { #next });
 
                 quote! { #var.as_ref().map(|#next| #tokens) }
             }
-            IterableField(ref inner) => {
+            IterableField(inner) => {
                 let next = format_ident!("x");
-                let next = quote! { #next };
+                let tokens = inner.borrow_or_clone(&quote! { #next });
 
-                let tokens = inner.borrow_or_clone(&next);
-
-                quote! { #var.iter().map(|x| #tokens).collect() }
+                quote! { #var.iter().map(|#next| #tokens).collect() }
             }
             JustMoved => quote! { #var.clone() },
         }
