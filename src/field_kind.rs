@@ -15,7 +15,7 @@ pub enum FieldKind {
 }
 impl FieldKind {
     pub fn resolve(ty: &syn::Type) -> Self {
-        match ty {
+        let field_kind = match ty {
             syn::Type::Path(syn::TypePath { path, .. }) => {
                 let segments = collect_segments(path);
 
@@ -45,6 +45,28 @@ impl FieldKind {
                 }
             }
             _ => FieldKind::JustMoved,
+        };
+
+        // Optimization to shortcut to JustMoved for containers that contain no
+        // references (thus generating a single move / clone instead of handling
+        // all inner fields)
+        if field_kind.is_static() {
+            return FieldKind::JustMoved;
+        }
+
+        field_kind
+    }
+
+    fn is_static(&self) -> bool {
+        match self {
+            FieldKind::PlainCow(_) => false,
+            FieldKind::AssumedCow => false,
+            FieldKind::OptField(inner) => inner.is_static(),
+            FieldKind::IterableField(inner) => inner.is_static(),
+            FieldKind::Box(inner) => inner.is_static(),
+            FieldKind::Array(inner) => inner.is_static(),
+            FieldKind::Tuple(elems) => elems.iter().all(FieldKind::is_static),
+            FieldKind::JustMoved => true,
         }
     }
 
